@@ -235,7 +235,7 @@ async def run_fde_stream(req: FDERequest) -> AsyncGenerator[str, None]:
                     # Delegate to the frontend — emit require-action with HTTP details
                     http_req = get_http_request_for_tool(tool_name, arguments)
                     yield _data({
-                        "type": "require-action",
+                        "type": "data-require-action",
                         "toolCallId": tool_call_id,
                         "toolName": tool_name,
                         "args": arguments,
