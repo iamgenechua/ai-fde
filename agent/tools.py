@@ -132,6 +132,140 @@ TOOL_DEFINITIONS = [
     },
 ]
 
+# -- Client-side tool definitions (executed by the frontend) -----------------
+# These map to the app's own API (see API.md). The frontend executes them
+# directly (same origin, no CORS issues) and sends back the results.
+
+CLIENT_TOOL_NAMES: set[str] = {
+    "listOrders",
+    "getOrder",
+    "updateOrderStatus",
+    "listProducts",
+    "checkout",
+}
+
+CLIENT_TOOL_DEFINITIONS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "listOrders",
+            "description": "List all orders. Returns orders with customer info, items, status, and total.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "getOrder",
+            "description": "Get a single order by ID with its valid status transitions.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "orderId": {
+                        "type": "string",
+                        "description": "The order ID, e.g. 'ORD-001'",
+                    },
+                },
+                "required": ["orderId"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "updateOrderStatus",
+            "description": (
+                "Update an order's status. Valid transitions: "
+                "pending→processing/cancelled, processing→shipped/cancelled, "
+                "shipped→delivered. Returns 422 on invalid transition."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "orderId": {
+                        "type": "string",
+                        "description": "The order ID",
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": ["processing", "shipped", "delivered", "cancelled"],
+                        "description": "The new status",
+                    },
+                },
+                "required": ["orderId", "status"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "listProducts",
+            "description": "List all products with their stock levels.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "checkout",
+            "description": (
+                "Create a new order. Provide an array of items with productId and quantity. "
+                "Returns 400 if no items, 404 if product not found, 409 if insufficient stock."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "productId": {"type": "string"},
+                                "quantity": {"type": "integer"},
+                            },
+                            "required": ["productId", "quantity"],
+                        },
+                        "description": "Array of items with productId and quantity",
+                    },
+                },
+                "required": ["items"],
+            },
+        },
+    },
+]
+
+ALL_TOOL_DEFINITIONS = TOOL_DEFINITIONS + CLIENT_TOOL_DEFINITIONS
+
+
+def get_http_request_for_tool(tool_name: str, arguments: dict) -> dict:
+    """Map a client tool call to the HTTP request the frontend should make."""
+    if tool_name == "listOrders":
+        return {"method": "GET", "path": "/api/orders"}
+    elif tool_name == "getOrder":
+        return {"method": "GET", "path": f"/api/orders/{arguments.get('orderId', '')}"}
+    elif tool_name == "updateOrderStatus":
+        return {
+            "method": "PATCH",
+            "path": f"/api/orders/{arguments.get('orderId', '')}/status",
+            "body": {"status": arguments.get("status", "")},
+        }
+    elif tool_name == "listProducts":
+        return {"method": "GET", "path": "/api/products"}
+    elif tool_name == "checkout":
+        return {
+            "method": "POST",
+            "path": "/api/checkout",
+            "body": {"items": arguments.get("items", [])},
+        }
+    return {}
+
+
 # -- Tool implementations ----------------------------------------------------
 
 ALLOWED_PREFIXES = ("app/", "components/", "lib/", "docs/", "server/")

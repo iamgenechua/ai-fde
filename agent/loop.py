@@ -8,8 +8,8 @@ from collections.abc import AsyncGenerator
 from openai import AsyncOpenAI
 
 from agent.config import OPENAI_API_KEY
-from agent.models import ChatMessage, FDERequest
-from agent.tools import TOOL_DEFINITIONS, execute_tool
+from agent.models import FDERequest
+from agent.tools import ALL_TOOL_DEFINITIONS, CLIENT_TOOL_NAMES, execute_tool, get_http_request_for_tool
 
 logger = logging.getLogger("relay")
 
@@ -44,7 +44,18 @@ def build_system_prompt(req: FDERequest) -> str:
         "- **ux_issue**: The code works as designed, but the design creates confusion or frustration.\n"
         "- **edge_case**: A scenario the code doesn't handle well. Not broken, but not graceful either.\n\n"
         "After classifying, give the user a brief, friendly summary of what you found, what they can do "
-        "right now (if anything), and that the engineering team has been notified for a permanent fix."
+        "right now (if anything), and that the engineering team has been notified for a permanent fix.\n\n"
+        "## App Actions\n"
+        "You can take actions on behalf of the user using these tools. They run in the user's "
+        "browser and will require their approval before executing:\n"
+        "- **listOrders** — View all orders in the system.\n"
+        "- **getOrder** — Look up a specific order and see its valid status transitions.\n"
+        "- **updateOrderStatus** — Change an order's status (pending→processing/cancelled, "
+        "processing→shipped/cancelled, shipped→delivered).\n"
+        "- **listProducts** — View all products and their stock levels.\n"
+        "- **checkout** — Create a new order for the user.\n\n"
+        "Use these proactively when the user's issue can be resolved by an action (e.g. updating "
+        "a stuck order, checking stock). The user will see what you're proposing and approve it."
     )
 
     if req.frontendLogs:
@@ -129,7 +140,7 @@ async def run_fde_stream(req: FDERequest) -> AsyncGenerator[str, None]:
             stream = await client.chat.completions.create(
                 model="gpt-4.1",
                 messages=openai_messages,
-                tools=TOOL_DEFINITIONS,
+                tools=ALL_TOOL_DEFINITIONS,
                 stream=True,
             )
 
@@ -220,13 +231,29 @@ async def run_fde_stream(req: FDERequest) -> AsyncGenerator[str, None]:
                     "input": arguments,
                 })
 
-                logger.info("[stream] Executing tool %s(%s)", tool_name, json.dumps(arguments)[:200])
-                result = await execute_tool(
-                    tool_name,
-                    arguments,
-                    element_context=element_context_str,
-                    messages=req.messages,
-                )
+                if tool_name in CLIENT_TOOL_NAMES:
+                    # Delegate to the frontend — emit require-action with HTTP details
+                    http_req = get_http_request_for_tool(tool_name, arguments)
+                    yield _data({
+                        "type": "require-action",
+                        "toolCallId": tool_call_id,
+                        "toolName": tool_name,
+                        "args": arguments,
+                        "httpRequest": http_req,
+                    })
+                    result = {
+                        "status": "suggested",
+                        "httpRequest": http_req,
+                    }
+                    logger.info("[stream] Client tool %s — delegated to frontend", tool_name)
+                else:
+                    logger.info("[stream] Executing server tool %s(%s)", tool_name, json.dumps(arguments)[:200])
+                    result = await execute_tool(
+                        tool_name,
+                        arguments,
+                        element_context=element_context_str,
+                        messages=req.messages,
+                    )
 
                 yield _data({
                     "type": "tool-output-available",
